@@ -68,6 +68,20 @@
     border: 1px solid var(--line); line-height: 1.5; font-size: 16px;
   }
   .close strong { color: var(--accent); }
+  .geo {
+    display: none; margin-top: 22px; padding: 18px; border-radius: 14px;
+    background: var(--card); border: 1px dashed var(--accent);
+  }
+  .geo-title { font-weight: 700; font-size: 19px; }
+  .geo-text { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 6px 0 14px; }
+  .geo button {
+    width: 100%; border: 1px solid var(--accent); border-radius: 12px; padding: 16px;
+    background: transparent; color: var(--accent); font: 700 17px "Rubik", sans-serif; cursor: pointer;
+  }
+  .geo button[disabled] { opacity: .6; }
+  .geo-out { font-size: 16px; line-height: 1.5; }
+  .geo-place { font-size: 21px; font-weight: 700; color: var(--accent); }
+  .geo-coords { color: var(--muted); font-size: 14px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   @keyframes in { to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .item { animation: none; opacity: 1; transform: none; } }
 </style>
@@ -83,6 +97,12 @@
 
   <section id="results" aria-live="polite">
     <div class="grid" id="grid"></div>
+    <div class="geo" id="geo-card">
+      <div class="geo-title">¿Y si le das un permiso?</div>
+      <p class="geo-text">Hasta aquí fue sin pedirte nada. Con un solo “Permitir”, una web sabe dónde estás parado.</p>
+      <button id="geo" type="button">Mostrar mi ubicación exacta</button>
+      <div id="geo-out" class="geo-out" aria-live="polite"></div>
+    </div>
     <div class="close">
       Ninguno de estos datos te lo pedimos. <strong>Así de fácil te reconoce una web</strong>, aunque no te registres y aunque borres las cookies.
     </div>
@@ -101,14 +121,14 @@
   var IP_SOURCES = [
     { url: "https://ipapi.co/json/", parse: function (d) {
         if (d.error) throw new Error(d.reason || "ipapi");
-        return { ip: d.ip, city: d.city, country: d.country_name };
+        return { ip: d.ip, city: d.city, country: d.country_name, isp: d.org };
       } },
     { url: "https://get.geojs.io/v1/ip/geo.json", parse: function (d) {
-        return { ip: d.ip, city: d.city, country: d.country };
+        return { ip: d.ip, city: d.city, country: d.country, isp: d.organization_name };
       } },
     { url: "https://ipwho.is/", parse: function (d) {
         if (d.success === false) throw new Error(d.message || "ipwho");
-        return { ip: d.ip, city: d.city, country: d.country };
+        return { ip: d.ip, city: d.city, country: d.country, isp: d.connection && d.connection.isp };
       } }
   ];
 
@@ -142,20 +162,104 @@
     });
   }
 
+  var UA = navigator.userAgent;
+  var IS_IPHONE = /iPhone|iPod/.test(UA);
+  var IS_IPAD = /iPad/.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1 && !/Android/.test(UA));
+  var IS_ANDROID = /Android/.test(UA);
+
+  // Android Chrome hides the real model and version in the UA; it hands them out on request.
+  var highEntropy = (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues)
+    ? navigator.userAgentData.getHighEntropyValues(["model", "platformVersion"]).catch(function () { return {}; })
+    : Promise.resolve({});
+
   function detectOS() {
-    var ua = navigator.userAgent;
+    var ua = UA;
     var m;
-    if (/iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
+    if (IS_IPHONE || IS_IPAD) {
+      // Since iOS 26 the UA freezes the OS at 18.x; the Safari version matches the real iOS version.
+      var safari = ua.match(/Version\/(\d+)/);
       m = ua.match(/OS (\d+)[_.](\d+)/);
-      return (/iPad/.test(ua) || navigator.platform === "MacIntel" ? "iPadOS" : "iOS") + (m ? " " + m[1] + "." + m[2] : "");
+      var name = IS_IPAD ? "iPadOS" : "iOS";
+      if (safari && +safari[1] >= 26) return Promise.resolve(name + " " + safari[1]);
+      return Promise.resolve(name + (m ? " " + m[1] + "." + m[2] : ""));
     }
-    if ((m = ua.match(/Android ([\d.]+)/))) return "Android " + m[1];
+    if (IS_ANDROID) {
+      return highEntropy.then(function (h) {
+        if (h.platformVersion) return "Android " + h.platformVersion.split(".")[0];
+        m = ua.match(/Android ([\d.]+)/);
+        return "Android" + (m ? " " + m[1] : "");
+      });
+    }
+    return Promise.resolve(detectDesktopOS(ua));
+  }
+
+  function detectDesktopOS(ua) {
+    var m;
     if (/Windows NT 10/.test(ua)) return "Windows 10/11";
     if (/Windows/.test(ua)) return "Windows";
     if ((m = ua.match(/Mac OS X ([\d_]+)/))) return "macOS " + m[1].replace(/_/g, ".");
     if (/CrOS/.test(ua)) return "ChromeOS";
     if (/Linux/.test(ua)) return "Linux";
     return NO;
+  }
+
+  // iPhones never say their model, but each family has a unique screen size (CSS px, portrait) and density.
+  var IPHONE_SCREENS = {
+    "320x568@2": "iPhone SE (1.ª gen) o 5s",
+    "375x667@2": "iPhone SE (2.ª o 3.ª gen), 8, 7 o 6s",
+    "414x736@3": "iPhone 8 Plus, 7 Plus o 6s Plus",
+    "375x812@3": "iPhone 13 mini, 12 mini, 11 Pro, XS o X",
+    "414x896@2": "iPhone 11 o XR",
+    "414x896@3": "iPhone 11 Pro Max o XS Max",
+    "390x844@3": "iPhone 16e, 14, 13, 13 Pro, 12 o 12 Pro",
+    "428x926@3": "iPhone 14 Plus, 13 Pro Max o 12 Pro Max",
+    "393x852@3": "iPhone 16, 15, 15 Pro o 14 Pro",
+    "430x932@3": "iPhone 16 Plus, 15 Pro Max, 15 Plus o 14 Pro Max",
+    "402x874@3": "iPhone 17, 17 Pro o 16 Pro",
+    "420x912@3": "iPhone Air",
+    "440x956@3": "iPhone 17 Pro Max o 16 Pro Max"
+  };
+
+  function samsungName(model) {
+    var m;
+    if ((m = model.match(/^SM-S9(\d)(\d)/))) {
+      return "Samsung Galaxy S" + (22 + +m[1]) + ({ "6": "+", "8": " Ultra" }[m[2]] || "");
+    }
+    if ((m = model.match(/^SM-F9\d(\d)/))) return "Samsung Galaxy Z Fold" + (+m[1] + 1);
+    if ((m = model.match(/^SM-F7\d(\d)/))) return "Samsung Galaxy Z Flip" + (+m[1] + 1);
+    if ((m = model.match(/^SM-([AM])(\d\d)\d/))) return "Samsung Galaxy " + m[1] + m[2];
+    return null;
+  }
+
+  function deviceModel() {
+    if (IS_IPHONE) {
+      var w = Math.min(screen.width, screen.height), h = Math.max(screen.width, screen.height);
+      var key = w + "x" + h + "@" + Math.round(window.devicePixelRatio || 1);
+      return Promise.resolve(IPHONE_SCREENS[key] || "Un iPhone");
+    }
+    if (IS_IPAD) return Promise.resolve("Un iPad");
+    if (IS_ANDROID) {
+      return highEntropy.then(function (h) {
+        var model = h.model || (UA.match(/Android [\d.]+; ([^;)]+)\)/) || [])[1];
+        if (!model || model === "K") return "Un celular Android";
+        var nice = samsungName(model);
+        return nice ? nice + " (" + model + ")" : model;
+      });
+    }
+    return Promise.resolve(null);
+  }
+
+  function settings() {
+    var mq = function (q) { return window.matchMedia && window.matchMedia(q).matches; };
+    var out = [mq("(prefers-color-scheme: dark)") ? "Modo oscuro activado" : "Modo claro"];
+    if (mq("(prefers-reduced-motion: reduce)")) out.push("reducir movimiento");
+    if (mq("(prefers-contrast: more)")) out.push("alto contraste");
+    if (mq("(orientation: landscape)")) out.push("celular de lado");
+    return out.join(" · ");
+  }
+
+  function cleanIsp(s) {
+    return s ? String(s).replace(/^AS\d+\s+/, "").trim() : null;
   }
 
   function detectBrowser() {
@@ -204,22 +308,22 @@
   function hardware() {
     var cores = navigator.hardwareConcurrency ? navigator.hardwareConcurrency + " núcleos" : null;
     var ram = navigator.deviceMemory ? "~" + navigator.deviceMemory + " GB de RAM" : null;
-    if (!cores && !ram) return NO;
-    return [cores, ram || "RAM: " + NO.toLowerCase()].filter(Boolean).join(" · ");
+    if (!cores && !ram) return null;
+    return [cores, ram].filter(Boolean).join(" · ");
   }
 
   function connection() {
     var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (!c) return NO;
+    if (!c) return null;
     var parts = [];
     if (c.type) parts.push(c.type === "wifi" ? "Wi-Fi" : c.type === "cellular" ? "Datos móviles" : c.type);
     if (c.effectiveType) parts.push("calidad " + c.effectiveType.toUpperCase());
     if (c.downlink) parts.push("~" + c.downlink + " Mbps");
-    return parts.length ? parts.join(" · ") : NO;
+    return parts.length ? parts.join(" · ") : null;
   }
 
   function battery() {
-    if (!navigator.getBattery) return Promise.resolve(NO);
+    if (!navigator.getBattery) return null;
     return navigator.getBattery().then(function (b) {
       return Math.round(b.level * 100) + "%" + (b.charging ? " · cargando" : " · sin cargar");
     }, function () { return NO; });
@@ -273,6 +377,48 @@
     });
   }
 
+  var GEO_TIMEOUT_MS = 12000;
+
+  function reverseGeocode(lat, lon) {
+    var url = "https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=es&latitude=" + lat + "&longitude=" + lon;
+    var controller = "AbortController" in window ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, IP_TIMEOUT_MS);
+    return fetch(url, { cache: "no-store", signal: controller ? controller.signal : undefined, referrerPolicy: "no-referrer" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        clearTimeout(timer);
+        var seen = {};
+        return [d.locality, d.city, d.principalSubdivision, d.countryName].filter(function (x) {
+          if (!x || seen[x]) return false; seen[x] = 1; return true;
+        }).join(", ");
+      }, function (e) { clearTimeout(timer); throw e; });
+  }
+
+  document.getElementById("geo").addEventListener("click", function () {
+    var btn = this;
+    var out = document.getElementById("geo-out");
+    if (!navigator.geolocation) { out.textContent = NO; return; }
+    btn.disabled = true;
+    btn.textContent = "Esperando tu permiso…";
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      var lat = pos.coords.latitude.toFixed(5), lon = pos.coords.longitude.toFixed(5);
+      var acc = Math.round(pos.coords.accuracy);
+      btn.style.display = "none";
+      out.innerHTML = "";
+      var place = document.createElement("div"); place.className = "geo-place"; place.textContent = "Buscando la dirección…";
+      var coords = document.createElement("div"); coords.className = "geo-coords";
+      coords.textContent = lat + ", " + lon + " · precisión de ±" + acc + " m";
+      out.appendChild(place); out.appendChild(coords);
+      reverseGeocode(lat, lon).then(function (t) { place.textContent = t || "Estás justo aquí"; },
+        function () { place.textContent = "Estás justo aquí"; });
+    }, function (err) {
+      btn.style.display = "none";
+      out.textContent = err.code === 1
+        ? "Le dijiste que no. ¡Bien hecho! Eso es justo lo que hay que hacer."
+        : "Tu celular no logró ubicarse esta vez.";
+    }, { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS, maximumAge: 0 });
+  });
+
   var grid = document.getElementById("grid");
   var shown = 0;
 
@@ -295,26 +441,40 @@
     document.getElementById("results").style.display = "block";
 
     var ipValue = addItem("Tu IP y ciudad aproximada", "Buscando…", { big: true });
-    addItem("Sistema operativo", detectOS());
+    var modelValue = addItem("Tu teléfono", "…");
+    var osValue = addItem("Sistema operativo", "…");
     addItem("Navegador", detectBrowser());
+    var ispValue = addItem("Tu operador / proveedor de internet", "Buscando…");
     addItem("Idioma", language());
     addItem("Zona horaria", timezone());
     addItem("Pantalla", screenInfo());
-    addItem("Procesador y memoria", hardware());
-    addItem("Conexión", connection());
-    var batValue = addItem("Batería", "…");
+    addItem("Ajustes de tu celular", settings());
+    var hw = hardware(); if (hw) addItem("Procesador y memoria", hw);
+    var net = connection(); if (net) addItem("Conexión", net);
+    var bat = battery();
+    if (bat) {
+      var batValue = addItem("Batería", "…");
+      bat.then(function (t) { batValue.textContent = t; });
+    }
     var fpValue = addItem("Tu huella digital (única para este celular)", "Calculando…", { mono: true });
 
-    battery().then(function (t) { batValue.textContent = t; });
+    deviceModel().then(function (t) {
+      if (t) modelValue.textContent = t; else modelValue.parentNode.remove();
+    });
+    detectOS().then(function (t) { osValue.textContent = t; });
     fingerprint().then(function (t) { fpValue.textContent = t; }, function () { fpValue.textContent = NO; });
 
     fetchIpInfo().then(function (d) {
       var place = [d.city, d.country].filter(Boolean).join(", ");
       ipValue.textContent = d.ip + (place ? " · " + place : "");
+      var isp = cleanIsp(d.isp);
+      if (isp) ispValue.textContent = isp; else ispValue.parentNode.remove();
     }, function () {
       ipValue.textContent = IP_FALLBACK;
+      ispValue.parentNode.remove();
     }).then(function () {
       btn.textContent = "Listo. Y no guardamos nada.";
+      document.getElementById("geo-card").style.display = "block";
       document.querySelector(".close").scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   });
