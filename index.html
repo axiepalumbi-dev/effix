@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0b0d12">
+<title>Lo que tu celular revela</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0b0d12;
+    --card: #141821;
+    --line: #232937;
+    --text: #f2f4f8;
+    --muted: #8b93a7;
+    --accent: #ffcc00;
+    --accent-ink: #111;
+    --danger: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Rubik", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: max(24px, env(safe-area-inset-top)) 16px 40px;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  .tag {
+    display: inline-block; font-size: 12px; font-weight: 500; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 4px 10px;
+  }
+  h1 { font-size: clamp(30px, 8vw, 42px); line-height: 1.05; font-weight: 800; margin: 18px 0 12px; }
+  h1 span { color: var(--accent); }
+  p.lead { color: var(--muted); font-size: 17px; line-height: 1.5; margin: 0 0 28px; }
+  button#go {
+    width: 100%; border: 0; border-radius: 16px; padding: 20px;
+    background: var(--accent); color: var(--accent-ink);
+    font: 700 19px "Rubik", sans-serif; cursor: pointer;
+    box-shadow: 0 10px 30px rgba(255, 204, 0, .25);
+    transition: transform .1s ease;
+  }
+  button#go:active { transform: scale(.98); }
+  button#go[disabled] { opacity: .6; }
+  .promise { text-align: center; color: var(--muted); font-size: 13px; margin-top: 12px; }
+  #results { display: none; margin-top: 28px; }
+  .grid { display: grid; gap: 10px; }
+  .item {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 16px; opacity: 0; transform: translateY(8px);
+    animation: in .4s ease forwards;
+  }
+  .item .k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .item .v { font-size: 18px; font-weight: 500; margin-top: 4px; word-break: break-word; }
+  .item.big { border-color: var(--accent); }
+  .item.big .v { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .hash { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 17px !important; letter-spacing: .04em; }
+  .close {
+    margin-top: 22px; padding: 18px; border-radius: 14px;
+    background: linear-gradient(135deg, rgba(255,92,108,.15), rgba(255,204,0,.12));
+    border: 1px solid var(--line); line-height: 1.5; font-size: 16px;
+  }
+  .close strong { color: var(--accent); }
+  @keyframes in { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .item { animation: none; opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+<main>
+  <span class="tag">Feria Effix · Demo en vivo</span>
+  <h1>Esto es lo que tu celular le cuenta a <span>cualquier web</span>.</h1>
+  <p class="lead">Sin pedirte permiso, sin que llenes nada. Toca el botón y mira.</p>
+
+  <button id="go" type="button">Ver lo que revela mi celular</button>
+  <p class="promise">No guardamos nada: todo se calcula aquí, en tu navegador.</p>
+
+  <section id="results" aria-live="polite">
+    <div class="grid" id="grid"></div>
+    <div class="close">
+      Ninguno de estos datos te lo pedimos. <strong>Así de fácil te reconoce una web</strong>, aunque no te registres y aunque borres las cookies.
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var NO = "Tu navegador no lo comparte";
+  var IP_FALLBACK = "La red de la feria la ocultó";
+  var IP_TIMEOUT_MS = 6000;
+
+  // Several free providers queried in parallel: if one rate-limits (429), another answers.
+  var IP_SOURCES = [
+    { url: "https://ipapi.co/json/", parse: function (d) {
+        if (d.error) throw new Error(d.reason || "ipapi");
+        return { ip: d.ip, city: d.city, country: d.country_name };
+      } },
+    { url: "https://get.geojs.io/v1/ip/geo.json", parse: function (d) {
+        return { ip: d.ip, city: d.city, country: d.country };
+      } },
+    { url: "https://ipwho.is/", parse: function (d) {
+        if (d.success === false) throw new Error(d.message || "ipwho");
+        return { ip: d.ip, city: d.city, country: d.country };
+      } }
+  ];
+
+  function fetchIpInfo() {
+    var controller = "AbortController" in window ? new AbortController() : null;
+    var timer;
+    var timeout = new Promise(function (_, reject) {
+      timer = setTimeout(function () {
+        if (controller) controller.abort();
+        reject(new Error("timeout"));
+      }, IP_TIMEOUT_MS);
+    });
+    var attempts = IP_SOURCES.map(function (src) {
+      return fetch(src.url, { cache: "no-store", signal: controller ? controller.signal : undefined, referrerPolicy: "no-referrer" })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (d) { var x = src.parse(d); if (!x.ip) throw new Error("no ip"); return x; });
+    });
+    return Promise.race([anyOf(attempts), timeout]).then(function (x) {
+      clearTimeout(timer);
+      if (controller) controller.abort();
+      return x;
+    }, function (e) { clearTimeout(timer); throw e; });
+  }
+
+  // Promise.any with a fallback for older browsers.
+  function anyOf(promises) {
+    if (Promise.any) return Promise.any(promises);
+    return new Promise(function (resolve, reject) {
+      var left = promises.length;
+      promises.forEach(function (p) { p.then(resolve, function () { if (--left === 0) reject(new Error("all failed")); }); });
+    });
+  }
+
+  function detectOS() {
+    var ua = navigator.userAgent;
+    var m;
+    if (/iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
+      m = ua.match(/OS (\d+)[_.](\d+)/);
+      return (/iPad/.test(ua) || navigator.platform === "MacIntel" ? "iPadOS" : "iOS") + (m ? " " + m[1] + "." + m[2] : "");
+    }
+    if ((m = ua.match(/Android ([\d.]+)/))) return "Android " + m[1];
+    if (/Windows NT 10/.test(ua)) return "Windows 10/11";
+    if (/Windows/.test(ua)) return "Windows";
+    if ((m = ua.match(/Mac OS X ([\d_]+)/))) return "macOS " + m[1].replace(/_/g, ".");
+    if (/CrOS/.test(ua)) return "ChromeOS";
+    if (/Linux/.test(ua)) return "Linux";
+    return NO;
+  }
+
+  function detectBrowser() {
+    var ua = navigator.userAgent;
+    var rules = [
+      [/Instagram/, "Instagram (navegador interno)"],
+      [/FBAN|FBAV/, "Facebook (navegador interno)"],
+      [/TikTok|musical_ly/, "TikTok (navegador interno)"],
+      [/SamsungBrowser\/([\d.]+)/, "Samsung Internet"],
+      [/EdgA?\/([\d.]+)/, "Edge"],
+      [/OPR\/([\d.]+)/, "Opera"],
+      [/CriOS\/([\d.]+)/, "Chrome"],
+      [/FxiOS\/([\d.]+)/, "Firefox"],
+      [/Firefox\/([\d.]+)/, "Firefox"],
+      [/Chrome\/([\d.]+)/, "Chrome"],
+      [/Version\/([\d.]+).*Safari/, "Safari"]
+    ];
+    for (var i = 0; i < rules.length; i++) {
+      var m = ua.match(rules[i][0]);
+      if (m) return rules[i][1] + (m[1] ? " " + m[1].split(".")[0] : "");
+    }
+    return NO;
+  }
+
+  function language() {
+    var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    try {
+      var names = new Intl.DisplayNames(["es"], { type: "language" });
+      return langs.slice(0, 3).map(function (l) { return names.of(l) || l; }).join(", ");
+    } catch (e) { return langs.slice(0, 3).join(", "); }
+  }
+
+  function timezone() {
+    try {
+      var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      var off = -new Date().getTimezoneOffset() / 60;
+      return tz + " (UTC" + (off >= 0 ? "+" : "") + off + ")";
+    } catch (e) { return NO; }
+  }
+
+  function screenInfo() {
+    var dpr = window.devicePixelRatio || 1;
+    return screen.width + " × " + screen.height + " · densidad " + Math.round(dpr * 100) / 100 + "x";
+  }
+
+  function hardware() {
+    var cores = navigator.hardwareConcurrency ? navigator.hardwareConcurrency + " núcleos" : null;
+    var ram = navigator.deviceMemory ? "~" + navigator.deviceMemory + " GB de RAM" : null;
+    if (!cores && !ram) return NO;
+    return [cores, ram || "RAM: " + NO.toLowerCase()].filter(Boolean).join(" · ");
+  }
+
+  function connection() {
+    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return NO;
+    var parts = [];
+    if (c.type) parts.push(c.type === "wifi" ? "Wi-Fi" : c.type === "cellular" ? "Datos móviles" : c.type);
+    if (c.effectiveType) parts.push("calidad " + c.effectiveType.toUpperCase());
+    if (c.downlink) parts.push("~" + c.downlink + " Mbps");
+    return parts.length ? parts.join(" · ") : NO;
+  }
+
+  function battery() {
+    if (!navigator.getBattery) return Promise.resolve(NO);
+    return navigator.getBattery().then(function (b) {
+      return Math.round(b.level * 100) + "%" + (b.charging ? " · cargando" : " · sin cargar");
+    }, function () { return NO; });
+  }
+
+  function canvasSignature() {
+    try {
+      var c = document.createElement("canvas");
+      c.width = 240; c.height = 60;
+      var x = c.getContext("2d");
+      x.textBaseline = "top";
+      x.font = "16px Arial";
+      x.fillStyle = "#f60"; x.fillRect(100, 1, 62, 20);
+      x.fillStyle = "#069"; x.fillText("Effix 2026 \u{1F4F1}", 2, 15);
+      x.fillStyle = "rgba(102,204,0,0.7)"; x.fillText("Effix 2026 \u{1F4F1}", 4, 17);
+      return c.toDataURL();
+    } catch (e) { return ""; }
+  }
+
+  function webglRenderer() {
+    try {
+      var gl = document.createElement("canvas").getContext("webgl");
+      if (!gl) return "";
+      var ext = gl.getExtension("WEBGL_debug_renderer_info");
+      return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    } catch (e) { return ""; }
+  }
+
+  function sha256Hex(text) {
+    if (!(window.crypto && crypto.subtle)) return Promise.resolve(simpleHash(text));
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+    });
+  }
+
+  function simpleHash(s) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function fingerprint() {
+    var parts = [
+      navigator.userAgent, (navigator.languages || []).join(","), timezone(),
+      screen.width + "x" + screen.height + "x" + screen.colorDepth, window.devicePixelRatio,
+      navigator.hardwareConcurrency, navigator.deviceMemory, navigator.maxTouchPoints,
+      navigator.platform, webglRenderer(), canvasSignature()
+    ];
+    return sha256Hex(parts.join("||")).then(function (hex) {
+      return hex.slice(0, 16).toUpperCase().match(/.{1,4}/g).join(" ");
+    });
+  }
+
+  var grid = document.getElementById("grid");
+  var shown = 0;
+
+  function addItem(label, value, opts) {
+    opts = opts || {};
+    var el = document.createElement("div");
+    el.className = "item" + (opts.big ? " big" : "");
+    el.style.animationDelay = (shown++ * 0.12) + "s";
+    var k = document.createElement("div"); k.className = "k"; k.textContent = label;
+    var v = document.createElement("div"); v.className = "v" + (opts.mono ? " hash" : ""); v.textContent = value;
+    el.appendChild(k); el.appendChild(v);
+    grid.appendChild(el);
+    return v;
+  }
+
+  document.getElementById("go").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = "Leyendo tu celular…";
+    document.getElementById("results").style.display = "block";
+
+    var ipValue = addItem("Tu IP y ciudad aproximada", "Buscando…", { big: true });
+    addItem("Sistema operativo", detectOS());
+    addItem("Navegador", detectBrowser());
+    addItem("Idioma", language());
+    addItem("Zona horaria", timezone());
+    addItem("Pantalla", screenInfo());
+    addItem("Procesador y memoria", hardware());
+    addItem("Conexión", connection());
+    var batValue = addItem("Batería", "…");
+    var fpValue = addItem("Tu huella digital (única para este celular)", "Calculando…", { mono: true });
+
+    battery().then(function (t) { batValue.textContent = t; });
+    fingerprint().then(function (t) { fpValue.textContent = t; }, function () { fpValue.textContent = NO; });
+
+    fetchIpInfo().then(function (d) {
+      var place = [d.city, d.country].filter(Boolean).join(", ");
+      ipValue.textContent = d.ip + (place ? " · " + place : "");
+    }, function () {
+      ipValue.textContent = IP_FALLBACK;
+    }).then(function () {
+      btn.textContent = "Listo. Y no guardamos nada.";
+      document.querySelector(".close").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
+})();
+</script>
+</body>
+</html>
