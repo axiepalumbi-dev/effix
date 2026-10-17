@@ -58,10 +58,11 @@
     animation: in .4s ease forwards;
   }
   .item .k { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-  .item .v { font-size: 18px; font-weight: 500; margin-top: 4px; word-break: break-word; }
+  .item .v { font-size: 21px; font-weight: 700; margin-top: 4px; line-height: 1.25; word-break: break-word; }
+  .item .d { font-size: 15px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
   .item.big { border-color: var(--accent); }
-  .item.big .v { font-size: 22px; font-weight: 700; color: var(--accent); }
-  .hash { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 17px !important; letter-spacing: .04em; }
+  .item.big .v { font-size: 24px; color: var(--accent); }
+  .hash { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 20px !important; letter-spacing: .04em; }
   .close {
     margin-top: 22px; padding: 18px; border-radius: 14px;
     background: linear-gradient(135deg, rgba(255,92,108,.15), rgba(255,204,0,.12));
@@ -204,19 +205,19 @@
 
   // iPhones never say their model, but each family has a unique screen size (CSS px, portrait) and density.
   var IPHONE_SCREENS = {
-    "320x568@2": "iPhone SE (1.ª gen) o 5s",
-    "375x667@2": "iPhone SE (2.ª o 3.ª gen), 8, 7 o 6s",
-    "414x736@3": "iPhone 8 Plus, 7 Plus o 6s Plus",
-    "375x812@3": "iPhone 13 mini, 12 mini, 11 Pro, XS o X",
+    "320x568@2": "iPhone SE",
+    "375x667@2": "iPhone SE o 8",
+    "414x736@3": "iPhone 8 Plus",
+    "375x812@3": "iPhone mini o X",
     "414x896@2": "iPhone 11 o XR",
-    "414x896@3": "iPhone 11 Pro Max o XS Max",
-    "390x844@3": "iPhone 16e, 14, 13, 13 Pro, 12 o 12 Pro",
-    "428x926@3": "iPhone 14 Plus, 13 Pro Max o 12 Pro Max",
-    "393x852@3": "iPhone 16, 15, 15 Pro o 14 Pro",
-    "430x932@3": "iPhone 16 Plus, 15 Pro Max, 15 Plus o 14 Pro Max",
-    "402x874@3": "iPhone 17, 17 Pro o 16 Pro",
+    "414x896@3": "iPhone 11 Pro Max",
+    "390x844@3": "iPhone 13 o 14",
+    "428x926@3": "iPhone 13 Pro Max o 14 Plus",
+    "393x852@3": "iPhone 15 o 16",
+    "430x932@3": "iPhone 15 Pro Max o 16 Plus",
+    "402x874@3": "iPhone 16 Pro o 17",
     "420x912@3": "iPhone Air",
-    "440x956@3": "iPhone 17 Pro Max o 16 Pro Max"
+    "440x956@3": "iPhone 16 Pro Max o 17 Pro Max"
   };
 
   function samsungName(model) {
@@ -242,23 +243,33 @@
         var model = h.model || (UA.match(/Android [\d.]+; ([^;)]+)\)/) || [])[1];
         if (!model || model === "K") return null;
         var nice = samsungName(model);
-        return nice ? nice + " (" + model + ")" : model;
+        return nice || model;
       });
     }
     return Promise.resolve(null);
   }
 
-  function settings() {
-    var mq = function (q) { return window.matchMedia && window.matchMedia(q).matches; };
-    var out = [mq("(prefers-color-scheme: dark)") ? "Modo oscuro activado" : "Modo claro"];
-    if (mq("(prefers-reduced-motion: reduce)")) out.push("reducir movimiento");
-    if (mq("(prefers-contrast: more)")) out.push("alto contraste");
-    if (mq("(orientation: landscape)")) out.push("celular de lado");
-    return out.join(" · ");
-  }
+
+  var ISP_BRANDS = [
+    [/colombia telecomunicaciones|telefonica|movistar/i, "Movistar"],
+    [/comcel|telmex colombia|claro/i, "Claro"],
+    [/colombia movil|une epm|tigo|millicom/i, "Tigo"],
+    [/partners telecom|wom/i, "WOM"],
+    [/empresa de telecomunicaciones de bogota|\betb\b/i, "ETB"],
+    [/radiomovil dipsa|telcel/i, "Telcel"],
+    [/telmex|telefonos de mexico/i, "Telmex"],
+    [/at&t|att mexico/i, "AT&T"],
+    [/totalplay/i, "Totalplay"],
+    [/megacable/i, "Megacable"],
+    [/entel/i, "Entel"],
+    [/personal|telecom argentina/i, "Personal"]
+  ];
 
   function cleanIsp(s) {
-    return s ? String(s).replace(/^AS\d+\s+/, "").trim() : null;
+    if (!s) return null;
+    s = String(s).replace(/^AS\d+\s+/, "").trim();
+    for (var i = 0; i < ISP_BRANDS.length; i++) if (ISP_BRANDS[i][0].test(s)) return ISP_BRANDS[i][1];
+    return s.replace(/\b(S\.?A\.?S?|E\.?S\.?P|BIC|LTDA|INC|LLC|S\.? DE R\.?L\.?( DE C\.?V\.?)?)\b\.?/gi, "").replace(/[\s,.]+$/, "").trim();
   }
 
   function detectBrowser() {
@@ -283,13 +294,6 @@
     return NO;
   }
 
-  function language() {
-    var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
-    try {
-      var names = new Intl.DisplayNames(["es"], { type: "language" });
-      return langs.slice(0, 3).map(function (l) { return names.of(l) || l; }).join(", ");
-    } catch (e) { return langs.slice(0, 3).join(", "); }
-  }
 
   function timezone() {
     try {
@@ -299,27 +303,8 @@
     } catch (e) { return NO; }
   }
 
-  function screenInfo() {
-    var dpr = window.devicePixelRatio || 1;
-    return screen.width + " × " + screen.height + " · densidad " + Math.round(dpr * 100) / 100 + "x";
-  }
 
-  function hardware() {
-    var cores = navigator.hardwareConcurrency ? navigator.hardwareConcurrency + " núcleos" : null;
-    var ram = navigator.deviceMemory ? "~" + navigator.deviceMemory + " GB de RAM" : null;
-    if (!cores && !ram) return null;
-    return [cores, ram].filter(Boolean).join(" · ");
-  }
 
-  function connection() {
-    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (!c) return null;
-    var parts = [];
-    if (c.type) parts.push(c.type === "wifi" ? "Wi-Fi" : c.type === "cellular" ? "Datos móviles" : c.type);
-    if (c.effectiveType) parts.push("calidad " + c.effectiveType.toUpperCase());
-    if (c.downlink) parts.push("~" + c.downlink + " Mbps");
-    return parts.length ? parts.join(" · ") : null;
-  }
 
   function battery() {
     if (!navigator.getBattery) return null;
@@ -389,14 +374,11 @@
 
   function behavior(e) {
     var secs = ((Date.now() - PAGE_START) / 1000).toFixed(1).replace(".", ",");
-    var out = "Tardaste " + secs + " s en tocar el botón";
+    var wait = "Lo pensaste " + secs + " segundos antes de tocar";
     if (tapX === null && e && e.clientX > 0) tapX = e.clientX;
-    if (tapX !== null) {
-      var x = tapX / window.innerWidth;
-      out += x >= 0.5 ? " · lo tocaste del lado derecho: eres diestro"
-        : " · lo tocaste del lado izquierdo: eres zurdo";
-    }
-    return out;
+    if (tapX === null) return { main: wait, sub: null };
+    var right = tapX / window.innerWidth >= 0.5;
+    return { main: right ? "Tocaste con la derecha: ¿eres diestro?" : "Tocaste con la izquierda: ¿eres zurdo?", sub: wait };
   }
 
   function utcOffset(tz) {
@@ -425,14 +407,16 @@
 
   function protection(ipTz) {
     var deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    var vpn = null;
+    var vpn = false;
     if (ipTz && deviceTz) {
       var a = utcOffset(ipTz), b = utcOffset(deviceTz);
-      if (a && b) vpn = a !== b ? "Tu IP dice " + ipTz.replace(/_/g, " ") + " pero tu celular dice " + deviceTz.replace(/_/g, " ") + ": ¿VPN?" : "Sin VPN (tu IP y tu reloj coinciden)";
+      vpn = !!(a && b && a !== b);
     }
     return hasAdBlocker().then(function (blocked) {
-      var ads = blocked ? "con bloqueador de anuncios" : "sin bloqueador de anuncios: los rastreadores te ven completo";
-      return (vpn ? vpn + " · " : "") + ads.charAt(0).toUpperCase() + ads.slice(1);
+      if (vpn && blocked) return { main: "Usas VPN y bloqueador", sub: "Bien: eres de los pocos que se protege" };
+      if (vpn) return { main: "Parece que usas VPN", sub: "Tu IP no coincide con la hora de tu celular" };
+      if (blocked) return { main: "Tienes bloqueador de anuncios", sub: "Pero sin VPN: tu IP sigue a la vista" };
+      return { main: "Sin VPN ni bloqueador", sub: "Los rastreadores te ven completo" };
     });
   }
 
@@ -483,68 +467,63 @@
 
   function hasData(t) { return !!t && t !== NO; }
 
-  // Fill an already-created card, or remove it if there is nothing real to show.
-  function fill(v, t) {
-    if (hasData(t)) v.textContent = t;
-    else if (v.parentNode) v.parentNode.remove();
-  }
-
-  function addItem(label, value, opts) {
-    if (!hasData(value)) return null;
+  function card(label, opts) {
     opts = opts || {};
     var el = document.createElement("div");
     el.className = "item" + (opts.big ? " big" : "");
-    el.style.animationDelay = (shown++ * 0.12) + "s";
+    el.style.animationDelay = (shown++ * 0.15) + "s";
     var k = document.createElement("div"); k.className = "k"; k.textContent = label;
-    var v = document.createElement("div"); v.className = "v" + (opts.mono ? " hash" : ""); v.textContent = value;
-    el.appendChild(k); el.appendChild(v);
+    var v = document.createElement("div"); v.className = "v" + (opts.mono ? " hash" : ""); v.textContent = "…";
+    var d = document.createElement("div"); d.className = "d";
+    el.appendChild(k); el.appendChild(v); el.appendChild(d);
     grid.appendChild(el);
-    return v;
+    return { el: el, main: v, sub: d };
+  }
+
+  // Fill a card, or drop it when there is nothing real to show.
+  function set(c, main, sub) {
+    if (!hasData(main)) { c.el.remove(); return; }
+    c.main.textContent = main;
+    if (sub) c.sub.textContent = sub; else c.sub.remove();
   }
 
   document.getElementById("go").addEventListener("click", function (e) {
     var btn = this;
-    var how = behavior(e);
     btn.disabled = true;
     btn.textContent = "Leyendo tu celular…";
     document.getElementById("results").style.display = "block";
 
-    var ipValue = addItem("Tu IP y ciudad aproximada", "Buscando…", { big: true });
-    var modelValue = addItem("Tu teléfono", "…");
-    var osValue = addItem("Sistema operativo", "…");
-    addItem("Navegador", detectBrowser());
-    var ispValue = addItem("Tu operador / proveedor de internet", "Buscando…");
-    addItem("Idioma", language());
-    addItem("Zona horaria", timezone());
-    addItem("Pantalla", screenInfo());
-    addItem("Ajustes de tu celular", settings());
-    var hw = hardware(); if (hw) addItem("Procesador y memoria", hw);
-    var net = connection(); if (net) addItem("Conexión", net);
-    var bat = battery();
-    if (bat) {
-      var batValue = addItem("Batería", "…");
-      bat.then(function (t) { fill(batValue, t); });
-    }
-    addItem("Cómo te comportaste", how + (scrolls ? " · hiciste scroll antes de decidirte" : ""));
-    var protValue = addItem("¿Qué tan protegido estás?", "Revisando…");
-    var fpValue = addItem("Tu huella digital (única para este celular)", "Calculando…", { mono: true });
+    var cWhere = card("Dónde estás", { big: true });
+    var cPhone = card("Tu celular");
+    var cTap = card("Cómo tocaste");
+    var cProt = card("Tu protección");
+    var cPrint = card("Tu huella digital", { mono: true });
 
-    deviceModel().then(function (t) { fill(modelValue, t); });
-    detectOS().then(function (t) { fill(osValue, t); });
-    fingerprint().then(function (t) { fill(fpValue, t); }, function () { fill(fpValue, null); });
+    var tap = behavior(e);
+    set(cTap, tap.main, tap.sub);
+
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var bat = battery();
+    Promise.all([deviceModel(), detectOS(), bat || Promise.resolve(null)]).then(function (v) {
+      var model = v[0], os = v[1], b = v[2];
+      var extra = [model ? os : null, detectBrowser().replace(/ \d+$/, ""), hasData(b) ? "batería " + b.split(" ")[0] : null, dark ? "modo oscuro" : null]
+        .filter(hasData).join(" · ");
+      set(cPhone, model || os, extra);
+    });
+
+    fingerprint().then(function (t) { set(cPrint, t, "Te reconoce aunque borres las cookies"); },
+      function () { set(cPrint, null); });
 
     fetchIpInfo().then(function (d) {
       var place = [d.city, d.country].filter(Boolean).join(", ");
-      ipValue.textContent = d.ip + (place ? " · " + place : "");
       var isp = cleanIsp(d.isp);
-      fill(ispValue, isp);
+      set(cWhere, place || d.ip, [place ? "IP " + d.ip : null, isp ? "con " + isp : null].filter(Boolean).join(" · "));
       return protection(d.tz);
     }, function () {
-      fill(ipValue, null);
-      fill(ispValue, null);
+      set(cWhere, null);
       return protection(null);
-    }).then(function (t) {
-      fill(protValue, t);
+    }).then(function (p) {
+      set(cProt, p.main, p.sub);
       btn.textContent = "Listo. Y no guardamos nada.";
       if (navigator.geolocation) document.getElementById("geo-card").style.display = "block";
       document.querySelector(".close").scrollIntoView({ behavior: "smooth", block: "nearest" });
