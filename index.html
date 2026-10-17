@@ -121,14 +121,14 @@
   var IP_SOURCES = [
     { url: "https://ipapi.co/json/", parse: function (d) {
         if (d.error) throw new Error(d.reason || "ipapi");
-        return { ip: d.ip, city: d.city, country: d.country_name, isp: d.org };
+        return { ip: d.ip, city: d.city, country: d.country_name, isp: d.org, tz: d.timezone };
       } },
     { url: "https://get.geojs.io/v1/ip/geo.json", parse: function (d) {
-        return { ip: d.ip, city: d.city, country: d.country, isp: d.organization_name };
+        return { ip: d.ip, city: d.city, country: d.country, isp: d.organization_name, tz: d.timezone };
       } },
     { url: "https://ipwho.is/", parse: function (d) {
         if (d.success === false) throw new Error(d.message || "ipwho");
-        return { ip: d.ip, city: d.city, country: d.country, isp: d.connection && d.connection.isp };
+        return { ip: d.ip, city: d.city, country: d.country, isp: d.connection && d.connection.isp, tz: d.timezone && d.timezone.id };
       } }
   ];
 
@@ -377,6 +377,60 @@
     });
   }
 
+  var PAGE_START = Date.now();
+  var scrolls = 0;
+  window.addEventListener("scroll", function () { scrolls++; }, { passive: true });
+
+  // How the visitor tapped: time to decide and which side of the screen the thumb hit.
+  function behavior(e) {
+    var secs = ((Date.now() - PAGE_START) / 1000).toFixed(1).replace(".", ",");
+    var out = "Tardaste " + secs + " s en tocar el botón";
+    if (e && e.detail > 0 && e.clientX > 0) {
+      var x = e.clientX / window.innerWidth;
+      out += x > 0.56 ? " · lo tocaste a la derecha: seguro usas la mano derecha"
+        : x < 0.44 ? " · lo tocaste a la izquierda: seguro eres zurdo o usas la izquierda"
+        : " · justo en el centro: ¿con el índice o con las dos manos?";
+    }
+    return out;
+  }
+
+  function utcOffset(tz) {
+    try {
+      var parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "shortOffset" }).formatToParts(new Date());
+      for (var i = 0; i < parts.length; i++) if (parts[i].type === "timeZoneName") return parts[i].value;
+    } catch (e) {}
+    return null;
+  }
+
+  // Ad blockers hide elements with typical ad class names.
+  function hasAdBlocker() {
+    var bait = document.createElement("div");
+    bait.className = "adsbox ad-banner adsbygoogle pub_300x250 text-ad";
+    bait.style.cssText = "position:absolute;left:-9999px;width:10px;height:10px;";
+    bait.innerHTML = "&nbsp;";
+    document.body.appendChild(bait);
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        var blocked = bait.offsetHeight === 0 || getComputedStyle(bait).display === "none";
+        bait.remove();
+        resolve(blocked);
+      }, 150);
+    });
+  }
+
+  function protection(ipTz) {
+    var deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    var vpn = null;
+    if (ipTz && deviceTz) {
+      var a = utcOffset(ipTz), b = utcOffset(deviceTz);
+      if (a && b) vpn = a !== b ? "Tu IP dice " + ipTz.replace(/_/g, " ") + " pero tu celular dice " + deviceTz.replace(/_/g, " ") + ": ¿VPN?" : "Sin VPN (tu IP y tu reloj coinciden)";
+    }
+    return hasAdBlocker().then(function (blocked) {
+      var ads = blocked ? "con bloqueador de anuncios" : "sin bloqueador de anuncios: los rastreadores te ven completo";
+      return (vpn ? vpn + " · " : "") + ads.charAt(0).toUpperCase() + ads.slice(1);
+    });
+  }
+
   var GEO_TIMEOUT_MS = 12000;
 
   function reverseGeocode(lat, lon) {
@@ -434,8 +488,9 @@
     return v;
   }
 
-  document.getElementById("go").addEventListener("click", function () {
+  document.getElementById("go").addEventListener("click", function (e) {
     var btn = this;
+    var how = behavior(e);
     btn.disabled = true;
     btn.textContent = "Leyendo tu celular…";
     document.getElementById("results").style.display = "block";
@@ -456,6 +511,8 @@
       var batValue = addItem("Batería", "…");
       bat.then(function (t) { batValue.textContent = t; });
     }
+    addItem("Cómo te comportaste", how + (scrolls ? " · hiciste scroll antes de decidirte" : ""));
+    var protValue = addItem("¿Qué tan protegido estás?", "Revisando…");
     var fpValue = addItem("Tu huella digital (única para este celular)", "Calculando…", { mono: true });
 
     deviceModel().then(function (t) {
@@ -469,10 +526,13 @@
       ipValue.textContent = d.ip + (place ? " · " + place : "");
       var isp = cleanIsp(d.isp);
       if (isp) ispValue.textContent = isp; else ispValue.parentNode.remove();
+      return protection(d.tz);
     }, function () {
       ipValue.textContent = IP_FALLBACK;
       ispValue.parentNode.remove();
-    }).then(function () {
+      return protection(null);
+    }).then(function (t) {
+      protValue.textContent = t;
       btn.textContent = "Listo. Y no guardamos nada.";
       document.getElementById("geo-card").style.display = "block";
       document.querySelector(".close").scrollIntoView({ behavior: "smooth", block: "nearest" });
