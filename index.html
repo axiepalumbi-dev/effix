@@ -114,7 +114,6 @@
   "use strict";
 
   var NO = "Tu navegador no lo comparte";
-  var IP_FALLBACK = "La red de la feria la ocultó";
   var IP_TIMEOUT_MS = 6000;
 
   // Several free providers queried in parallel: if one rate-limits (429), another answers.
@@ -235,13 +234,13 @@
     if (IS_IPHONE) {
       var w = Math.min(screen.width, screen.height), h = Math.max(screen.width, screen.height);
       var key = w + "x" + h + "@" + Math.round(window.devicePixelRatio || 1);
-      return Promise.resolve(IPHONE_SCREENS[key] || "Un iPhone");
+      return Promise.resolve(IPHONE_SCREENS[key] || null);
     }
-    if (IS_IPAD) return Promise.resolve("Un iPad");
+    if (IS_IPAD) return Promise.resolve("iPad");
     if (IS_ANDROID) {
       return highEntropy.then(function (h) {
         var model = h.model || (UA.match(/Android [\d.]+; ([^;)]+)\)/) || [])[1];
-        if (!model || model === "K") return "Un celular Android";
+        if (!model || model === "K") return null;
         var nice = samsungName(model);
         return nice ? nice + " (" + model + ")" : model;
       });
@@ -382,14 +381,20 @@
   window.addEventListener("scroll", function () { scrolls++; }, { passive: true });
 
   // How the visitor tapped: time to decide and which side of the screen the thumb hit.
+  var tapX = null;
+  function rememberTap(x) { if (typeof x === "number" && x > 0) tapX = x; }
+  var goBtn = document.getElementById("go");
+  goBtn.addEventListener("touchstart", function (ev) { if (ev.touches[0]) rememberTap(ev.touches[0].clientX); }, { passive: true });
+  goBtn.addEventListener("pointerdown", function (ev) { rememberTap(ev.clientX); });
+
   function behavior(e) {
     var secs = ((Date.now() - PAGE_START) / 1000).toFixed(1).replace(".", ",");
     var out = "Tardaste " + secs + " s en tocar el botón";
-    if (e && e.detail > 0 && e.clientX > 0) {
-      var x = e.clientX / window.innerWidth;
-      out += x > 0.56 ? " · lo tocaste a la derecha: seguro usas la mano derecha"
-        : x < 0.44 ? " · lo tocaste a la izquierda: seguro eres zurdo o usas la izquierda"
-        : " · justo en el centro: ¿con el índice o con las dos manos?";
+    if (tapX === null && e && e.clientX > 0) tapX = e.clientX;
+    if (tapX !== null) {
+      var x = tapX / window.innerWidth;
+      out += x >= 0.5 ? " · lo tocaste del lado derecho: eres diestro"
+        : " · lo tocaste del lado izquierdo: eres zurdo";
     }
     return out;
   }
@@ -476,7 +481,16 @@
   var grid = document.getElementById("grid");
   var shown = 0;
 
+  function hasData(t) { return !!t && t !== NO; }
+
+  // Fill an already-created card, or remove it if there is nothing real to show.
+  function fill(v, t) {
+    if (hasData(t)) v.textContent = t;
+    else if (v.parentNode) v.parentNode.remove();
+  }
+
   function addItem(label, value, opts) {
+    if (!hasData(value)) return null;
     opts = opts || {};
     var el = document.createElement("div");
     el.className = "item" + (opts.big ? " big" : "");
@@ -509,32 +523,30 @@
     var bat = battery();
     if (bat) {
       var batValue = addItem("Batería", "…");
-      bat.then(function (t) { batValue.textContent = t; });
+      bat.then(function (t) { fill(batValue, t); });
     }
     addItem("Cómo te comportaste", how + (scrolls ? " · hiciste scroll antes de decidirte" : ""));
     var protValue = addItem("¿Qué tan protegido estás?", "Revisando…");
     var fpValue = addItem("Tu huella digital (única para este celular)", "Calculando…", { mono: true });
 
-    deviceModel().then(function (t) {
-      if (t) modelValue.textContent = t; else modelValue.parentNode.remove();
-    });
-    detectOS().then(function (t) { osValue.textContent = t; });
-    fingerprint().then(function (t) { fpValue.textContent = t; }, function () { fpValue.textContent = NO; });
+    deviceModel().then(function (t) { fill(modelValue, t); });
+    detectOS().then(function (t) { fill(osValue, t); });
+    fingerprint().then(function (t) { fill(fpValue, t); }, function () { fill(fpValue, null); });
 
     fetchIpInfo().then(function (d) {
       var place = [d.city, d.country].filter(Boolean).join(", ");
       ipValue.textContent = d.ip + (place ? " · " + place : "");
       var isp = cleanIsp(d.isp);
-      if (isp) ispValue.textContent = isp; else ispValue.parentNode.remove();
+      fill(ispValue, isp);
       return protection(d.tz);
     }, function () {
-      ipValue.textContent = IP_FALLBACK;
-      ispValue.parentNode.remove();
+      fill(ipValue, null);
+      fill(ispValue, null);
       return protection(null);
     }).then(function (t) {
-      protValue.textContent = t;
+      fill(protValue, t);
       btn.textContent = "Listo. Y no guardamos nada.";
-      document.getElementById("geo-card").style.display = "block";
+      if (navigator.geolocation) document.getElementById("geo-card").style.display = "block";
       document.querySelector(".close").scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   });
